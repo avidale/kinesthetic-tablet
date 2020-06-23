@@ -1,0 +1,40 @@
+options:
+  initial_state: MAIN
+
+intents:
+  FORWARD:
+    examples:
+      - дальше
+      - следующий
+      - следующая
+      - вперёд
+      - вперед
+  '1':
+    examples: ['1', один, one]
+  '2':
+    examples: ['2', два, two]
+  '3':
+    examples: ['3', три, three]
+  '4':
+    examples: ['4', четыре, four]
+  '5':
+    examples: ['5', пять, five]
+  '6':
+    examples: ['6', шесть, six]
+  '7':
+    examples: ['7', семь, seven]
+  '8':
+    examples: ['8', восемь, eight]
+  '9':
+    examples: ['9', девять, nine]
+  '10':
+    examples: ['10', десять, ten]
+
+states:
+  MAIN:
+    q:
+      - Меню
+      - Главное меню
+    a: 'Навык «Кинестетик планшет» включен. Назовите номер урока.'
+    next:
+      - suggest: 1
