@@ -122,7 +122,7 @@ class KTDM(tgalice.dialog_manager.BaseDialogManager):
 
         if not ctx.message_text or ctx.session_is_new():
             response.set_rich_text(
-                'Навык «Кинестетик планшет» включен. Назовите номер урока.'
+                'Навык «Кинестетик-планшет» включен. Назовите номер урока.'
             )
             response.suggests = [str(i) for i in sounds.keys()]
         elif 'choose' in forms:
@@ -148,12 +148,17 @@ class KTDM(tgalice.dialog_manager.BaseDialogManager):
         elif tgalice.basic_nlu.like_exit(ctx.message_text):
             response.set_rich_text('Всего хорошего, до встречи в навыке "Кинестетик Планшет!"')
             response.commands.append(tgalice.COMMANDS.EXIT)
-        else:
+        elif tgalice.basic_nlu.like_help(ctx.message_text):
             response.set_rich_text(
-                'Вы в навыке "Кинестетик Планшет". '
-                'Назовите номер урока. '
-                'Для выхода скажите "Хватит"'
+                'Вы в навыке "Кинестетик-планшет". '
+                'Кинестетик-планшет - это планшет для слепых и слабовидящих детей.'
+                'В этом навыке реализованы звуковые уроки для его пользователей. '
+                'Назовите номер урока (сейчас пока есть только один). '
+                'Для выхода из навыка скажите "Хватит".'
             )
+        else:
+            response.set_rich_text('Вы в навыке "Кинестетик-планшет". '
+                                   'Назовите номер урока или скажите "хватит"')
 
         response.user_object['session'] = ss.__dict__
         if ss.current_lesson and ss.current_section and not response.suggests:
