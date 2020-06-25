@@ -1,5 +1,15 @@
+import attr
+import re
 import tgalice
 import yaml
+
+from tgalice.dialog import Response
+
+
+@attr.s
+class SessionState:
+    current_lesson: int = attr.ib(default=None)
+    current_section: int = attr.ib(default=None)
 
 
 # todo: move it to a separate yaml file
@@ -21,51 +31,147 @@ sounds = {
     }
 }
 
-# todo: download the yaml from github instead
-with open('menu.yaml', 'r', encoding='utf-8') as f:
-    menu = yaml.safe_load(f)
 
-for lesson_id, lesson in sounds.items():
-    parts = lesson['parts']
-    nexts = [
-        {'intent': f'{i + 1}', 'label': f'L{lesson_id}P{i + 1}'}
-        for i in range(len(parts))
-    ]
-    menu['states'][f'L{lesson_id}'] = {
-        'q': [f'включи урок {lesson_id}', f'включи урок номер {lesson_id}'],
-        'a': f'<text>Запускаю урок {lesson_id}.</text>'
-             f'{lesson["intro"]}'
-             f'Чтобы продолжить, скажите "дальше" или номер секции.',
-        'next': nexts + [{'suggest': 'дальше', 'intent': 'FORWARD', 'label': f'L{lesson_id}P1'}],
-    }
-    for part_id, part in enumerate(parts):
-        part_code = {
-            'a': f'<text>Урок {lesson_id} часть {part_id+1}.</text>'
-                 f'{part}'
-                 f'Чтобы продолжить, скажите "дальше" или номер секции.',
-            'next': nexts[:],
-        }
-        if part_id < len(parts) - 1:
-            part_code['next'].append(
-                {'suggest': 'дальше', 'intent': 'FORWARD', 'label': f'L{lesson_id}P{part_id+2}'}
-            )
-        menu['states'][f'L{lesson_id}P{part_id+1}'] = part_code
+E_CONTENT_TYPE = {
+    'lesson': ['урок', 'занятие'],
+    'section': ['часть', 'секция'],
+}
+E_CONTENT_TYPE_INVERSE = {expr: k for k, v in E_CONTENT_TYPE.items() for expr in v}
 
 
-manager = tgalice.dialog_manager.CascadeDialogManager(
-    tgalice.dialog_manager.AutomatonDialogManager(menu, matcher='cosine'),
-    tgalice.dialog_manager.GreetAndHelpDialogManager(
-        greeting_message="Дефолтное приветственное сообщение",
-        help_message="Дефолтный вызов помощи",
-        default_message='Я вас не понимаю.',
-        exit_message='Всего доброго! Было приятно с вами пообщаться!'
+def parse_request(text):
+    result = {}
+    if not text:
+        return {}
+
+    content_types = '|'.join(expr for v in E_CONTENT_TYPE.values() for expr in v)
+    match = re.match(
+        '(включи|запусти)?\\s*'
+        f'(?P<content_type>{content_types})?\\s*'
+        '(?P<content_id>\\d+)',
+        text
     )
-)
+    if match:
+        slots = match.groupdict()
+        if 'content_type' in slots:
+            slots['content_type'] = E_CONTENT_TYPE_INVERSE.get(slots['content_type'], slots['content_type'])
+        result['choose'] = {'slots': {k: {'value': v} for k, v in slots.items()}}
+
+    if re.match('дальше|вперед|следующий', text):
+        result['next'] = {'slots': {}}
+
+    return result
+
+
+def nlg_lesson(lesson_id):
+    lesson = sounds[lesson_id]
+    return (
+        f'<text>Запускаю урок {lesson_id}. </text>'
+        f'{lesson["intro"]}'
+        f'Чтобы продолжить, скажите "дальше" или номер секции.'
+    )
+
+
+def nlg_section(lesson_id, section_id):
+    lesson = sounds[lesson_id]
+    return (
+        f'<text>Урок {lesson_id} часть {section_id}. </text>'
+        f'{lesson["parts"][section_id-1]}'
+        f'Чтобы продолжить, скажите "дальше" или номер секции.'
+    )
+
+
+def process_lesson(content_id: int, response: Response, ss: SessionState):
+    if content_id not in sounds.keys():
+        response.set_rich_text(
+            f'Такого урока у меня нет. Назовите номер от {min(sounds.keys())} до {max(sounds.keys())}.'
+        )
+        ss.current_lesson = None
+        ss.current_section = None
+        response.suggests = [str(i) for i in sounds.keys()]
+    else:
+        ss.current_lesson = content_id
+        ss.current_section = 0
+        response.set_rich_text(nlg_lesson(content_id))
+
+
+def process_section(content_id: int, response: Response, ss: SessionState):
+    if ss.current_lesson is None:
+        response.set_rich_text('Сначала выберите урок.')
+        response.suggests = [str(i) for i in sounds.keys()]
+    else:
+        lesson = sounds[ss.current_lesson]
+        n = len(lesson['parts'])
+        if content_id > n or content_id <= 0:
+            response.set_rich_text(f'В уроке {ss.current_lesson} только {n} частей.')
+        else:
+            ss.current_section = content_id
+            response.set_rich_text(nlg_section(ss.current_lesson, content_id))
+
+
+class KTDM(tgalice.dialog_manager.BaseDialogManager):
+    def respond(self, ctx: tgalice.dialog.Context):
+        ss = SessionState(**ctx.user_object.get('session', {}))
+        forms = parse_request(text=ctx.message_text)
+        if ctx.yandex and ctx.yandex.request.nlu.intents:
+            forms.update({k: v.to_dict() for k, v in ctx.yandex.request.nlu.intents.items()})
+        response = Response(
+            'привет',
+            user_object={'session': ss.__dict__}
+        )
+
+        if not ctx.message_text or ctx.session_is_new():
+            response.set_rich_text(
+                'Навык «Кинестетик планшет» включен. Назовите номер урока.'
+            )
+            response.suggests = [str(i) for i in sounds.keys()]
+        elif 'choose' in forms:
+            form = forms['choose']['slots']
+            content_id = int(form['content_id']['value'])
+            content_type = form.get('content_type', {}).get('value')
+            if content_type == 'lesson':
+                process_lesson(content_id=content_id, response=response, ss=ss)
+            elif content_type == 'section':
+                process_section(content_id=content_id, response=response, ss=ss)
+            else:
+                if ss.current_lesson is None:
+                    process_lesson(content_id=content_id, response=response, ss=ss)
+                else:
+                    process_section(content_id=content_id, response=response, ss=ss)
+        elif 'next' in forms:
+            if ss.current_section is not None:
+                process_section(content_id=ss.current_section + 1, ss=ss, response=response)
+            elif ss.current_lesson is not None:
+                process_lesson(content_id=ss.current_lesson, response=response, ss=ss)
+            else:
+                process_lesson(content_id=min(sounds.keys()), response=response, ss=ss)
+        elif tgalice.basic_nlu.like_exit(ctx.message_text):
+            response.set_rich_text('Всего хорошего, до встречи в навыке "Кинестетик Планшет!"')
+            response.commands.append(tgalice.COMMANDS.EXIT)
+        else:
+            response.set_rich_text(
+                'Вы в навыке "Кинестетик Планшет". '
+                'Назовите номер урока. '
+                'Для выхода скажите "Хватит"'
+            )
+
+        response.user_object['session'] = ss.__dict__
+        if ss.current_lesson and ss.current_section and not response.suggests:
+            response.suggests.append('дальше')
+            if ss.current_section > 1:
+                response.suggests.append(str(ss.current_section - 1))
+            response.suggests.append(str(ss.current_section))
+            if ss.current_section < len(sounds[ss.current_lesson]['parts']):
+                response.suggests.append(str(ss.current_section + 1))
+        return response
+
+
+manager = KTDM()
 
 connector = tgalice.dialog_connector.DialogConnector(
     dialog_manager=manager,
     storage=tgalice.storage.session_storage.BaseStorage(),
-    alice_native_state='state',
+    alice_native_state=True,
 )
 
 alice_handler = connector.serverless_alice_handler
