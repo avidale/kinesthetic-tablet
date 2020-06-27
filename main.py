@@ -185,7 +185,7 @@ connector = tgalice.dialog_connector.DialogConnector(
     alice_native_state=True,
 )
 
-alice_handler = connector.serverless_alice_handler
+handler = connector.serverless_alice_handler
 
 
 if __name__ == '__main__':
