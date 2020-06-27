@@ -1,7 +1,7 @@
 import attr
 import re
 import tgalice
-import yaml
+
 
 from tgalice.dialog import Response
 
@@ -77,7 +77,7 @@ def nlg_section(lesson_id, section_id):
     return (
         f'<text>Урок {lesson_id} часть {section_id}. </text>'
         f'{lesson["parts"][section_id-1]}'
-        f'Чтобы продолжить, скажите "дальше" или номер секции.'
+        f'<text>Чтобы продолжить, скажите "дальше" или номер секции. </text>'
     )
 
 
@@ -111,7 +111,8 @@ def process_section(content_id: int, response: Response, ss: SessionState):
 
 class KTDM(tgalice.dialog_manager.BaseDialogManager):
     def respond(self, ctx: tgalice.dialog.Context):
-        ss = SessionState(**ctx.user_object.get('session', {}))
+        uo = ctx.user_object or {}
+        ss = SessionState(**uo.get('session', {}))
         forms = parse_request(text=ctx.message_text)
         if ctx.yandex and ctx.yandex.request.nlu.intents:
             forms.update({k: v.to_dict() for k, v in ctx.yandex.request.nlu.intents.items()})
@@ -173,9 +174,14 @@ class KTDM(tgalice.dialog_manager.BaseDialogManager):
 
 manager = KTDM()
 
+db = tgalice.message_logging.get_mongo_or_mock()
+
 connector = tgalice.dialog_connector.DialogConnector(
     dialog_manager=manager,
     storage=tgalice.storage.session_storage.BaseStorage(),
+    log_storage=tgalice.storage.message_logging.MongoMessageLogger(
+        collection=db.get_collection('logs'), detect_pings=True,
+    ),
     alice_native_state=True,
 )
 
